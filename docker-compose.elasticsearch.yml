@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: coursemanager-elasticsearch
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=coursemanager-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - coursemanager-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: coursemanager-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - coursemanager-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: coursemanager-logstash
+    environment:
+      - LS_JAVA_OPTS=-Xmx512m -Xms512m
+    volumes:
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - coursemanager-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9600/_node/stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  elasticsearch-curator:
+    image: elastic/curator:5.8.4
+    container_name: coursemanager-curator
+    volumes:
+      - ./curator/config.yml:/usr/share/curator/config.yml:ro
+      - ./curator/actions.yml:/usr/share/curator/actions.yml:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - coursemanager-network
+    command: ["--config", "/usr/share/curator/config.yml", "/usr/share/curator/actions.yml"]
+
+volumes:
+  elasticsearch_data:
+    driver: local
+
+networks:
+  coursemanager-network:
+    driver: bridge
